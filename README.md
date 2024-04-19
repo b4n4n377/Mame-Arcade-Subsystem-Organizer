@@ -1,7 +1,11 @@
 # MAME Arade Subsystem Organizer
 
 ## Overview
-This Python script helps users extract and organize arcade subsystems such as SNK NeoGeo or Sega Naomi from a current MAME full romset (non-merged). It automates the creation of subfolders and populates them with the corresponding ROMs and CHDs, facilitating the management of extensive arcade game collections. The script operates by:
+This Python script helps users extract and organize arcade subsystems such as SNK NeoGeo or Sega Naomi from a current MAME full romset (non-merged). It automates the creation of subfolders and populates them with the corresponding ROMs and CHDs, facilitating the management of extensive arcade game collections. 
+
+**Update 04/2024:** It now also creates a sub folder with all the games of the 'All Killer No Filler' list, see http://forum.arcadecontrols.com/index.php?topic=149708.0
+
+The script operates by:
 - Running ```mame -listxml``` to create an XML file with all supported systems.
 - Converting the XML file to a more manageable JSON file.
 - Reading the subsystems to be organized from the ArcadeSystems.ini file.
