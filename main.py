@@ -140,7 +140,7 @@ class MameArcadeSubsystemOrganizer:
         logging.info("Paths received and validated.")
         return True
 
-    def sort_roms(self, config_file="ArcadeSystems.ini"):
+    def sort_subsystem_roms(self, config_file="ArcadeSystems.ini"):
         """
         Method to sort the ROMs based on the configuration file
         """
@@ -210,19 +210,129 @@ class MameArcadeSubsystemOrganizer:
             logging.error(f"Error during command execution: {e.stderr}")
             return False
 
+    def check_aknf_ini_file(self, config_file="aknfList.ini"):
+        """
+        Helper method for manually checking the validity of the aknfList.ini file
+        """
+        logging.info("Checking the aknfList.ini file...")
+        reference_roms = set()
+
+        # Read ROMs from aknfList.ini file
+        config = configparser.ConfigParser()
+        config.optionxform = str
+        config.read(config_file)
+        aknfroms = config["AllKillerNoFillerRoms"]
+
+        # Check if the ROMs are present in the MAME JSON
+        with open(self.json_path, "r") as json_file:
+            machines = json.load(json_file)
+            for rom, value in aknfroms.items():
+                if value.lower() == "true":
+                    found = False
+                    for machine in machines:
+                        if machine["name"] == rom:
+                            found = True
+                            # logging.info(f"ROM '{rom}' found in MAME JSON.")
+
+                            # Check dependencies to other ROMs
+                            if "device_refs" in machine:
+                                device_refs = machine["device_refs"]
+                                for device_ref in device_refs:
+                                    for machine in machines:
+                                        if (
+                                            machine["name"] == device_ref
+                                            and machine["roms"]
+                                        ):
+                                            reference_roms.add(device_ref)
+                                            break
+                            break
+
+                    if not found:
+                        logging.warning(
+                            f"ROM '{rom}' not found in MAME JSON. Add the successor ROM to aknfList.ini."
+                        )
+
+        # Check if the reference ROMs are present aknfList.ini
+        if reference_roms:
+            # Check if the reference ROMs are present in the aknfroms
+            for reference_rom in reference_roms:
+                found = False
+                for rom, value in aknfroms.items():
+                    if reference_rom == rom:
+                        found = True
+                        break  # Found the reference ROM in aknfList.ini
+                if not found:
+                    logging.warning(f"ROM '{reference_rom}' not found in aknfList.ini.")
+
+    def sort_aknf_roms(self, config_file="aknfList.ini"):
+        """
+        Method to sort the ROMs based on the AllKillerNoFiller configuration file
+        """
+        config = configparser.ConfigParser()
+        config.optionxform = str  # preserve case
+        config.read(config_file)
+        aknf_roms = config["AllKillerNoFillerRoms"]
+
+        base_dir = os.path.join(
+            os.path.dirname(self.rom_path), "Arcade-Systems-filtered"
+        )
+        os.makedirs(base_dir, exist_ok=True)
+
+        system_dir = os.path.join(base_dir, "AllKillerNoFillerRoms")
+        os.makedirs(system_dir, exist_ok=True)
+        self.copy_aknf_roms_and_chds(aknf_roms, system_dir)
+
+    def copy_aknf_roms_and_chds(self, aknf_roms, system_dir):
+        """
+        Method to copy specified AKNF ROMs and CHDs to the system directory.
+        """
+
+        rom_files = [
+            os.path.join(self.rom_path, f"{rom}.zip")
+            for rom in aknf_roms
+            if os.path.exists(os.path.join(self.rom_path, f"{rom}.zip"))
+        ]
+
+        chd_folders = [
+            os.path.join(self.chd_path, rom)
+            for rom in aknf_roms
+            if os.path.isdir(os.path.join(self.chd_path, rom))
+        ]
+
+        if rom_files:
+            subprocess.run(["rsync", "-av", "--progress"] + rom_files + [system_dir])
+            logging.info(f"AKNF ROM files copied to {system_dir} using rsync.")
+        else:
+            logging.info("No AKNF ROM files found to copy.")
+
+        if chd_folders:
+            subprocess.run(["rsync", "-av", "--progress"] + chd_folders + [system_dir])
+            logging.info(f"AKNF CHD folders copied to {system_dir} using rsync.")
+        else:
+            logging.info("No AKNF CHD folders found to copy.")
+
 
 def main():
     """
     Main function to execute the script
     """
-    manager = MameArcadeSubsystemOrganizer()
+    manager = MameArcadeSubsystemOrganizer(rom_path=None, chd_path=None)
+
     if not manager.generate_mame_xml():
         sys.exit(1)
+
     if not manager.convert_xml_to_json():
         sys.exit(1)
+
     if not manager.get_user_paths():
         sys.exit(1)
-    manager.sort_roms()
+
+    # Uncomment if you want to check the aknfList.ini file
+    # manager.check_aknf_ini_file()
+
+    manager.sort_subsystem_roms()
+
+    manager.sort_aknf_roms()
 
 
 if __name__ == "__main__":
