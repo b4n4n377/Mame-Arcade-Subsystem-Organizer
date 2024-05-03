@@ -13,6 +13,11 @@ The script operates by:
 
 ## Installation / Usage
 
+**Step 0:** Install ansible to your local machine, e.g. in arch linux
+```bash
+sudo pacman -Sy ansible
+```
+
 **Step 1:** Clone the repository to your local machine
 ```bash
 git clone https://github.com/b4n4n377/Mame-Arcade-Subsystem-Organizer.git
@@ -20,9 +25,11 @@ cd Mame-Arcade-Subsystem-Organizer
 ```
 **Step 2:** Edit the ArcadeSystems.ini file according to your preferences
 
-**Step 3:** Run the script and follow the on-screen instructions
+**Step 3:** Edit the ansible inventory file config/inventory.yml to your remote host where the romsets are at
+
+**Step 3:** Run the script
 
 ```bash
-python main.py
+./run-playbook.sh
 ```
 
