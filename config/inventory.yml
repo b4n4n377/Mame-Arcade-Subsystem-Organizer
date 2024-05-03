@@ -1,0 +1,2 @@
+[mame_hosts]
+192.169.178.100 ansible_user=arcade ansible_password=arcade ansible_become_pass=arcade

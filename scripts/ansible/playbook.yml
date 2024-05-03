@@ -1,0 +1,213 @@
+---
+- name: Sort MAME Subsystem ROMs
+  hosts: mame_hosts
+  gather_facts: true
+
+  vars:
+    rompath: "/PLEASE/POINT/TO/YOUR/ROM/DIRECTORY/"
+    chdpath: "/PLEASE/POINT/TO/YOUR/CHD/DIRECTORY/"
+    new_rompath: "/home/arcade/shared/roms/mame/"
+    scripts_src_dir: "{{ playbook_dir }}/../python"
+    config_src_dir: "{{ playbook_dir }}/../../config"
+    temp_dir: "{{ ansible_env.HOME }}/mame_temp"
+
+  tasks:
+    # ------------------------------------------------------------------------------------------------
+    - name: Create remote host temp directories and copy needed files
+      block:
+        - name: Create temp directories for scripts and configs
+          ansible.builtin.file:
+            path: "{{ temp_dir }}/{{ item }}"
+            state: directory
+            mode: '0755'
+          loop:
+            - scripts
+            - config
+
+        - name: Copy Python scripts and config files to temp_dir
+          ansible.builtin.copy:
+            src: "{{ item.src }}/{{ item.file }}"
+            dest: "{{ temp_dir }}/{{ item.type }}/{{ item.file }}"
+            mode: "{{ item.mode }}"
+          loop:
+            - { src: "{{ scripts_src_dir }}", file: "convert_mame_xml_to_json.py", type: 'scripts', mode: '0755' }
+            - { src: "{{ scripts_src_dir }}", file: "parse_ArcadeSystems.py", type: 'scripts', mode: '0755' }
+            - { src: "{{ scripts_src_dir }}", file: "filter_subsystems.py", type: 'scripts', mode: '0755' }
+            - { src: "{{ scripts_src_dir }}", file: "get_chds_from_romset.py", type: 'scripts', mode: '0755' }
+            - { src: "{{ scripts_src_dir }}", file: "get_aknf_roms.py", type: 'scripts', mode: '0755' }
+            - { src: "{{ config_src_dir }}", file: "ArcadeSystems.ini", type: 'config', mode: '0644' }
+            - { src: "{{ config_src_dir }}", file: "aknfList.ini", type: 'config', mode: '0644' }
+
+    # ------------------------------------------------------------------------------------------------
+    - name: Generate mame.xml and convert it to JSON
+      block:
+        - name: Generate mame.xml
+          ansible.builtin.shell:
+            cmd: "mame -listxml > {{ temp_dir }}/mame.xml"
+          args:
+            creates: "{{ temp_dir }}/mame.xml"
+
+        - name: Convert XML to JSON
+          ansible.builtin.command:
+            cmd: "python3 {{ temp_dir }}/scripts/convert_mame_xml_to_json.py {{ temp_dir }}/mame.xml {{ temp_dir }}/mame.json"
+          args:
+            creates: "{{ temp_dir }}/mame.json"
+
+    # ------------------------------------------------------------------------------------------------
+    - name: Prepare the selected MAME subsystem romsets
+      block:
+        - name: Read the needed arcade subsystems from "ArcadeSystems.ini"
+          ansible.builtin.command:
+            cmd: "python3 {{ temp_dir }}/scripts/parse_ArcadeSystems.py {{ temp_dir }}/config/ArcadeSystems.ini"
+          changed_when: false
+          register: subsystems
+
+        - name: Create a directory for each subsystem
+          ansible.builtin.file:
+            path: "{{ new_rompath }}{{ item.name }}"
+            state: directory
+            mode: '0755'
+          loop: "{{ subsystems.stdout | from_json }}"
+
+        - name: Filter MAME JSON by each subsystem using their drivers
+          ansible.builtin.command:
+            cmd: "python3 {{ temp_dir }}/scripts/filter_subsystems.py {{ temp_dir }}/mame.json '{{ item.driver }}'"
+          loop: "{{ subsystems.stdout | from_json }}"
+          changed_when: false
+          register: filtered_machines
+
+        - name: Create files for each romset
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/{{ item.item.name }}-romset.txt"
+            content: "{{ item.stdout | from_json | map(attribute='name') | join('\n') }}"
+            mode: '0644'
+          loop: "{{ filtered_machines.results }}"
+          when: "item.stdout != '' and item.rc == 0"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+    # ------------------------------------------------------------------------------------------------
+    - name: Create "All Killer no Filler" rsnyc files
+      block:
+        - name: Read all the roms from "aknfList.ini"
+          ansible.builtin.command:
+            cmd: "python3 {{ temp_dir }}/scripts/get_aknf_roms.py {{ temp_dir }}/config/aknfList.ini"
+          changed_when: false
+          register: aknf_roms
+  
+        - name: Create a directory for "All Killer no Filler" roms
+          ansible.builtin.file:
+            path: "{{ new_rompath }}/AllKillerNoFiller"
+            state: directory
+            mode: '0755'
+    
+        - name: Create "All Killer no Filler" romset file
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/AllKillerNoFiller-romset.txt"
+            content: |
+              {% for rom in aknf_roms.stdout_lines %}
+              {{ rom }}
+              {% endfor %}
+            mode: '0644'
+
+        - name: Create "All Killer no Filler" ROMS rsync file
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/AllKillerNoFiller-roms-rsync.txt"
+            content: |
+              {% for rom in aknf_roms.stdout_lines %}
+              {{ rom }}.zip
+              {% endfor %}
+            mode: '0644'
+
+
+    # ------------------------------------------------------------------------------------------------
+    - name: Create rsync files for each subsystem romset
+      block:
+        - name: Create roms rsync files for each romset
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/{{ item.item.name }}-roms-rsync.txt"
+            content: |
+              {% for rom in item.stdout | from_json | map(attribute='name') %}
+              {{ rom }}.zip
+              {% endfor %}
+            mode: '0644'
+          loop: "{{ filtered_machines.results }}"
+          when: "item.stdout != '' and item.rc == 0"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Get full paths of *_romset.txt files
+          ansible.builtin.find:
+            paths: "{{ temp_dir }}"
+            patterns: "*-romset.txt"
+          register: romset_files
+
+        - name: Check for existing CHD for each *_romset.txt file
+          ansible.builtin.command: "python3 {{ temp_dir }}/scripts/get_chds_from_romset.py {{ item.path }} {{ chdpath }}"
+          loop: "{{ romset_files.files }}"
+          register: chd_output
+          changed_when: false
+          loop_control:
+            label: "{{ item.path | basename }}"
+
+        - name: Create rsync files for each romset with chds
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/{{ item.item.path | basename | regex_replace('-romset.txt$', '-chds-rsync.txt') }}"
+            content: "{{ item.stdout }}"
+            mode: '0644'
+          loop: "{{ chd_output.results }}"
+          when: item.stdout != ''
+          loop_control:
+            label: "{{ item.item.path | basename | regex_replace('-romset.txt$', '-chds-rsync.txt') }}"
+
+        - name: Find ROM resnc files
+          ansible.builtin.find:
+            paths: "{{ temp_dir }}"
+            patterns: "*-roms-rsync.txt"
+          register: roms_rsync_files
+
+        - name: Find CHD rsync files
+          ansible.builtin.find:
+            paths: "{{ temp_dir }}"
+            patterns: "*-chds-rsync.txt"
+          register: chds_rsync_files
+
+        - name: Set facts for ROM rsync file names
+          ansible.builtin.set_fact:
+            roms_rsync_file_names: "{{ roms_rsync_files.files | map(attribute='path') | map('basename') | list }}"
+
+        - name: Set facts for CHD rsync file names
+          ansible.builtin.set_fact:
+            chd_rsync_file_names: "{{ chds_rsync_files.files | map(attribute='path') | map('basename') | list }}"
+
+    # ------------------------------------------------------------------------------------------------
+    - name: Sync ROMs and CHDs to their respective subsystem directories
+      block:
+        - name: Copy ROM files to their respective subsystem directories
+          ansible.builtin.shell:
+            cmd: >
+              rsync -avzh --ignore-missing-args
+              --files-from={{ temp_dir }}/{{ item }}
+              {{ rompath }} {{ new_rompath }}{{ item | regex_replace('-roms-rsync.txt$', '') }}
+          with_items: "{{ roms_rsync_file_names }}"
+          loop_control:
+            label: "{{ item }}"
+          changed_when: false
+
+        - name: Copy CHD files to their respective subsystem directories
+          ansible.builtin.shell:
+            cmd: >
+              rsync -avzh --recursive --ignore-missing-args
+              --files-from={{ temp_dir }}/{{ item }}
+              {{ chdpath }} {{ new_rompath }}{{ item | regex_replace('-chds-rsync.txt$', '') }}
+          with_items: "{{ chd_rsync_file_names }}"
+          loop_control:
+            label: "{{ item }}"
+          changed_when: false
+    # ------------------------------------------------------------------------------------------------
+    - name: Clean up
+      block:
+        - name: Remove existing /tmp directory in user's home directory
+          ansible.builtin.file:
+            path: "{{ ansible_env.HOME }}/mame_temp"
+            state: absent
