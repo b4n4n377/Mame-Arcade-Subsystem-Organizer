@@ -5,6 +5,9 @@ This **(now ansible)** script helps users extract and organize arcade subsystems
 
 **Update 04/2024:** It now also creates a sub folder with all the games of the 'All Killer No Filler' list, see http://forum.arcadecontrols.com/index.php?topic=149708.0
 
+**Update 05/2024:** Adapted the whole script to ansible, so it can be run remotely, for example on your MAME computer.
+
+
 The script operates by:
 - Running ```mame -listxml``` to create an XML file with all supported systems.
 - Converting the XML file to a more manageable JSON file.
